@@ -11,6 +11,7 @@ import torch.optim as optim
 import torch.utils.data
 from torch.autograd import Variable
 from datasets import PartDataset
+from modelnet40_pcl_datasets import Modelnet40_PCL_Dataset
 from pointnet import PointNetCls
 import torch.nn.functional as F
 
@@ -33,16 +34,29 @@ print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
-dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0', classification = True, npoints = opt.num_points)
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
-                                          shuffle=True, num_workers=int(opt.workers))
+dataset = 'modelnet40_pcl'
+if dataset == 'partnno':
+    opt.num_points = 2500
+    train_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0',
+                                classification = True, train = True, npoints = opt.num_points)
+    test_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0',
+                               classification = True, train = False, npoints = opt.num_points)
+elif dataset == 'modelnet40_pcl':
+    opt.num_points = 2048
+    train_dataset = Modelnet40_PCL_Dataset(data_dir = 'modelnet40_ply_hdf5_2048',
+                                           train = True, npoints = opt.num_points)
+    test_dataset = Modelnet40_PCL_Dataset(data_dir = 'modelnet40_ply_hdf5_2048',
+                                          train = False, npoints = opt.num_points)
+else:
+    assert 0
 
-test_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0', classification = True, train = False, npoints = opt.num_points)
+traindataloader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batchSize,
+                                              shuffle=True, num_workers=int(opt.workers))
 testdataloader = torch.utils.data.DataLoader(test_dataset, batch_size=opt.batchSize,
-                                          shuffle=True, num_workers=int(opt.workers))
+                                             shuffle=True, num_workers=int(opt.workers))
 
-print('train:', len(dataset), 'test:', len(test_dataset))
-num_classes = len(dataset.classes)
+print('train:', len(train_dataset), 'test:', len(test_dataset))
+num_classes = len(train_dataset.classes)
 print('classes', num_classes)
 
 if not os.path.exists(opt.outf):
@@ -67,15 +81,18 @@ optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
 if opt.cuda:
     classifier.cuda()
 
-num_batch = len(dataset) / opt.batchSize + 1
+num_batch = len(train_dataset) / opt.batchSize + 1
 
 for epoch in range(opt.nepoch):
     i = 0
     # train
-    for points, target in dataloader:
+    for points, target in traindataloader:
         i += 1
         bsize = len(target)
-        points, target = Variable(points), Variable(target[:,0])
+        if dataset == 'partnno':
+            points, target = Variable(points), Variable(target[:,0])
+        elif dataset == 'modelnet40_pcl':
+            points, target = Variable(points), Variable(target[:])
         points = points.transpose(2,1)
         if opt.cuda:
             points, target = points.cuda(), target.cuda()
@@ -98,7 +115,10 @@ for epoch in range(opt.nepoch):
     for points, target in testdataloader:
         j += 1
         bsize = len(target)
-        points, target = Variable(points), Variable(target[:,0])
+        if dataset == 'partnno':
+            points, target = Variable(points), Variable(target[:,0])
+        elif dataset == 'modelnet40_pcl':
+            points, target = Variable(points), Variable(target[:])
         points = points.transpose(2,1)
         if opt.cuda:
             points, target = points.cuda(), target.cuda()
