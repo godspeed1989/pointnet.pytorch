@@ -23,6 +23,7 @@ parser.add_argument('--nepoch', type=int, default = 25, help='number of epochs t
 parser.add_argument('--outf', type=str, default = 'cls',  help='output folder')
 parser.add_argument('--model', type=str, default = '',  help='model path')
 parser.add_argument('--cuda', type=bool, default = True, help='run with cuda')
+parser.add_argument('--start_epoch', type=int, default = 0, help='start epoch index')
 
 opt = parser.parse_args()
 print (opt)
@@ -72,17 +73,20 @@ def log_string(out_str):
     print(out_str)
 
 classifier = PointNetCls(k = num_classes, num_points = opt.num_points)
+optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
+# F.nll_loss()
+criterion = nn.CrossEntropyLoss()
 
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
-
-optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
 if opt.cuda:
     classifier.cuda()
+    criterion.cuda()
 
 num_batch = len(train_dataset) / opt.batchSize + 1
 
+se = opt.start_epoch
 for epoch in range(opt.nepoch):
     i = 0
     # train
@@ -103,13 +107,13 @@ for epoch in range(opt.nepoch):
         if trans2.is_cuda:
             eye64 = eye64.cuda()
         trans2 = trans2 - eye64
-        loss = F.nll_loss(pred, target) + torch.norm(trans2, 2)
+        loss = criterion(pred, target) + torch.norm(trans2, 2)
         loss.backward()
         optimizer.step()
         pred_choice = pred.data.max(1)[1]
         correct = pred_choice.eq(target.data).cpu().sum()
         log_string('[%d: %d/%d] train loss: %f accuracy: %f' %
-                    (epoch, i, num_batch, loss.data[0], correct/float(bsize)))
+                    (se+epoch, i, num_batch, loss.data[0], correct/float(bsize)))
     # test per epoch
     j, loss, correct = 0, 0, 0
     for points, target in testdataloader:
@@ -127,6 +131,6 @@ for epoch in range(opt.nepoch):
         pred_choice = pred.data.max(1)[1]
         correct += pred_choice.eq(target.data).cpu().sum() / float(bsize)
     log_string('[%d: %d/%d] test loss: %f accuracy: %f' %
-                (epoch, i, num_batch, loss/j, correct/j))
+                (se+epoch, i, num_batch, loss/j, correct/j))
     # save per epoch
-    torch.save(classifier.state_dict(), '%s/cls_model_%d.pth' % (opt.outf, epoch))
+    torch.save(classifier.state_dict(), '%s/cls_model_%d.pth' % (opt.outf, se+epoch))

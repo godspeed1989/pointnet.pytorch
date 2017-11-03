@@ -11,6 +11,7 @@ import torch.optim as optim
 import torch.utils.data
 from torch.autograd import Variable
 from datasets import PartDataset
+from modelnet40_pcl_datasets import Modelnet40_PCL_Dataset
 from pointnet import PointNetCls
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -21,27 +22,37 @@ import matplotlib.pyplot as plt
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--model', type=str, default = '',  help='model path')
-parser.add_argument('--batchSize', type=int, default = 16, help='input batch size')
+parser.add_argument('--batchSize', type=int, default = 10, help='input batch size')
 
 opt = parser.parse_args()
 print (opt)
 
-test_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0' , train = False, classification = True)
-
+dataset = 'modelnet40_pcl'
+if dataset == 'partnno':
+    test_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0',
+                                classification = True, train = False, npoints = 2500)
+    classifier = PointNetCls(k = len(test_dataset.classes), num_points = 2500)
+elif dataset == 'modelnet40_pcl':
+    test_dataset = Modelnet40_PCL_Dataset(data_dir = 'modelnet40_ply_hdf5_2048', train = False, npoints = 2048)
+    classifier = PointNetCls(k = 40, num_points = 2048)
+else:
+    assert 0
 testdataloader = torch.utils.data.DataLoader(test_dataset, batch_size=opt.batchSize, shuffle = False)
 
-
-classifier = PointNetCls(k = len(test_dataset.classes))
 classifier.cuda()
 classifier.load_state_dict(torch.load(opt.model))
 classifier.eval()
 
 for points, target in testdataloader:
-    points, target = Variable(points), Variable(target[:,0])
+    bsize = len(target)
+    if dataset == 'partnno':
+        points, target = Variable(points), Variable(target[:,0])
+    elif dataset == 'modelnet40_pcl':
+        points, target = Variable(points), Variable(target[:])
     points = points.transpose(2,1)
     points, target = points.cuda(), target.cuda()
-    pred, _ = classifier(points)
+    pred, _, _ = classifier(points)
     loss = F.nll_loss(pred, target)
     pred_choice = pred.data.max(1)[1]
     correct = pred_choice.eq(target.data).cpu().sum()
-    print('loss: %f accuracy: %f' %(loss.data[0], correct/float(opt.batchSize)))
+    print('loss: %f accuracy: %f' %(loss.data[0], correct/float(bsize)))
