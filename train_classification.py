@@ -19,7 +19,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--batchSize', type=int, default = 12, help='input batch size')
 parser.add_argument('--num_points', type=int, default = 2500, help='input batch size')
 parser.add_argument('--workers', type=int, default = 4, help='number of data loading workers')
-parser.add_argument('--nepoch', type=int, default = 25, help='number of epochs to train for')
+parser.add_argument('--nepoch', type=int, default = 50, help='number of epochs to train for')
 parser.add_argument('--outf', type=str, default = 'cls',  help='output folder')
 parser.add_argument('--model', type=str, default = '',  help='model path')
 parser.add_argument('--cuda', type=bool, default = True, help='run with cuda')
@@ -103,7 +103,7 @@ for epoch in range(opt.nepoch):
         optimizer.zero_grad()
         pred, _, trans2 = classifier(points)
         # get loss
-        eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).view(1,64*64).repeat(bsize,1)
+        eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).repeat(bsize,1)
         if trans2.is_cuda:
             eye64 = eye64.cuda()
         trans2 = trans2 - eye64

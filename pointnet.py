@@ -136,9 +136,9 @@ class PointNetfeat(nn.Module):
         x = F.relu(self.bn4(self.conv4(x)))
         # conv5 128 x n -> 1024 x n
         x = self.bn5(self.conv5(x))
-        # pooling
+        # pooling b x 1024 x n -> b x 1024 x 1
         x = self.mp1(x)
-        # reshape 1024 x n -> n x 1024
+        # view b x 1024 x 1 -> b x 1024
         x = x.view(-1, 1024)
         if self.global_feat:    # using global feats for classification
             return x, trans1, trans2
