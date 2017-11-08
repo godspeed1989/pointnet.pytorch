@@ -16,13 +16,13 @@ import pdb
 import torch.nn.functional as F
 
 
-# transform on raw input data 
+# STN1 transform on raw input data 
 # spatial transformer network
 class STN3d(nn.Module):
     def __init__(self, num_points = 2500):
         super(STN3d, self).__init__()
         self.num_points = num_points
-        self.conv1 = nn.Conv1d(3, 64, 1)
+        self.conv1 = nn.Conv2d(1, 64, (3, 1))
         self.conv2 = nn.Conv1d(64, 128, 1)
         self.conv3 = nn.Conv1d(128, 1024, 1)
         self.mp1 = nn.MaxPool1d(num_points)
@@ -38,7 +38,10 @@ class STN3d(nn.Module):
 
     def forward(self, x):
         batchsize = x.size()[0]
-        x = F.relu(self.bn1(self.conv1(x)))
+        x = x.view(batchsize, 1, 3, self.num_points)
+        x = self.conv1(x)
+        x = x.squeeze()
+        x = F.relu(self.bn1(x))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
         x = self.mp1(x)
@@ -56,7 +59,7 @@ class STN3d(nn.Module):
         x = x.view(-1, 3, 3)
         return x
 
-# 64 x 64 transform
+# STN2 64 x 64 transform
 class Feats_STN3d(nn.Module):
     def __init__(self, num_points = 2500):    
         super(Feats_STN3d, self).__init__()
@@ -100,7 +103,7 @@ class PointNetfeat(nn.Module):
         super(PointNetfeat, self).__init__()
         self.stn1 = STN3d(num_points = num_points)
         self.stn2 = Feats_STN3d(num_points = num_points)
-        self.conv1 = torch.nn.Conv1d(3, 64, 1)
+        self.conv1 = torch.nn.Conv2d(1, 64, (3, 1))
         self.conv2 = torch.nn.Conv1d(64, 64, 1)
         self.conv3 = torch.nn.Conv1d(64, 64, 1)
         self.conv4 = torch.nn.Conv1d(64, 128, 1)
@@ -119,9 +122,14 @@ class PointNetfeat(nn.Module):
         trans1 = self.stn1(x)
         x = x.transpose(2, 1) # 3 x n -> n x 3
         x = torch.bmm(x, trans1) # (n x 3) * (3 x 3)
-        x = x.transpose(2, 1) # n x 3 -> 3 x n
-        # conv1 3 x n -> 64 x n
-        x = F.relu(self.bn1(self.conv1(x)))
+        x = x.transpose(2, 1).contiguous() # n x 3 -> 3 x n
+        # 3 x n -> 1 x 3 x n
+        x = x.view(batchsize, 1, 3, self.num_points)
+        # conv1 1 x 3 x n -> 1 x 64 x n
+        x = self.conv1(x)
+        # 1 x 64 x n -> 64 x n
+        x = x.squeeze()
+        x = F.relu(self.bn1(x))
         # conv2 64 x n -> 64 x n
         x = F.relu(self.bn2(self.conv2(x)))
         # regressing the feature transforming parameters using STN2
