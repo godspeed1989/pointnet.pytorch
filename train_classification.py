@@ -19,7 +19,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--batchSize', type=int, default = 12, help='input batch size')
 parser.add_argument('--num_points', type=int, default = 2500, help='input batch size')
 parser.add_argument('--workers', type=int, default = 4, help='number of data loading workers')
-parser.add_argument('--nepoch', type=int, default = 50, help='number of epochs to train for')
+parser.add_argument('--nepoch', type=int, default = 250, help='number of epochs to train for')
 parser.add_argument('--outf', type=str, default = 'cls',  help='output folder')
 parser.add_argument('--model', type=str, default = '',  help='model path')
 parser.add_argument('--cuda', type=bool, default = True, help='run with cuda')
@@ -104,10 +104,13 @@ for epoch in range(opt.nepoch):
         pred, _, trans2 = classifier(points)
         # get loss
         eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).repeat(bsize,1)
+        regression_weight = Variable(torch.FloatTensor([0.001]))
         if trans2.is_cuda:
             eye64 = eye64.cuda()
+            regression_weight = regression_weight.cuda()
+        trans2 = torch.bmm(trans2, trans2.transpose(2,1))
         trans2 = trans2 - eye64
-        loss = criterion(pred, target) + torch.norm(trans2, 2)
+        loss = torch.add(criterion(pred, target), torch.mul(torch.norm(trans2, 2), regression_weight))
         loss.backward()
         optimizer.step()
         pred_choice = pred.data.max(1)[1]

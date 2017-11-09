@@ -43,6 +43,9 @@ classifier.cuda()
 classifier.load_state_dict(torch.load(opt.model))
 classifier.eval()
 
+# F.nll_loss()
+criterion = nn.CrossEntropyLoss()
+
 for points, target in testdataloader:
     bsize = len(target)
     if dataset == 'partnno':
@@ -52,7 +55,7 @@ for points, target in testdataloader:
     points = points.transpose(2,1)
     points, target = points.cuda(), target.cuda()
     pred, _, _ = classifier(points)
-    loss = F.nll_loss(pred, target)
+    loss = criterion(pred, target)
     pred_choice = pred.data.max(1)[1]
     correct = pred_choice.eq(target.data).cpu().sum()
     print('loss: %f accuracy: %f' %(loss.data[0], correct/float(bsize)))
