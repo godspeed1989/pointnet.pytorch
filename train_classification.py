@@ -104,12 +104,13 @@ for epoch in range(opt.nepoch):
         pred, _, trans2 = classifier(points)
         # get loss
         eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).repeat(bsize,1)
+        eye64 = eye64.view(bsize, 64, 64)
         regression_weight = Variable(torch.FloatTensor([0.001]))
         if trans2.is_cuda:
             eye64 = eye64.cuda()
             regression_weight = regression_weight.cuda()
         trans2 = torch.bmm(trans2, trans2.transpose(2,1))
-        trans2 = trans2 - eye64
+        trans2 = trans2.sub(eye64)
         loss = torch.add(criterion(pred, target), torch.mul(torch.norm(trans2, 2), regression_weight))
         loss.backward()
         optimizer.step()
