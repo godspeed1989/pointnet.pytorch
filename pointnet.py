@@ -19,7 +19,7 @@ import torch.nn.functional as F
 # STN1 transform on raw input data 
 # spatial transformer network
 class STN3d(nn.Module):
-    def __init__(self, num_points = 2500):
+    def __init__(self, num_points):
         super(STN3d, self).__init__()
         self.num_points = num_points
         self.conv1 = nn.Conv2d(1, 64, (3, 1))
@@ -61,7 +61,7 @@ class STN3d(nn.Module):
 
 # STN2 64 x 64 transform
 class Feats_STN3d(nn.Module):
-    def __init__(self, num_points = 2500):    
+    def __init__(self, num_points):    
         super(Feats_STN3d, self).__init__()
         self.conv1 = nn.Conv1d(64, 64, 1)
         self.conv2 = nn.Conv1d(64, 128, 1)
@@ -99,7 +99,7 @@ class Feats_STN3d(nn.Module):
         return x
 
 class PointNetfeat(nn.Module):
-    def __init__(self, num_points = 2500, global_feat = True):
+    def __init__(self, num_points, global_feat):
         super(PointNetfeat, self).__init__()
         self.stn1 = STN3d(num_points = num_points)
         self.stn2 = Feats_STN3d(num_points = num_points)
@@ -113,7 +113,7 @@ class PointNetfeat(nn.Module):
         self.bn3 = nn.BatchNorm1d(64)
         self.bn4 = nn.BatchNorm1d(128)
         self.bn5 = nn.BatchNorm1d(1024)
-        self.mp1 = torch.nn.MaxPool1d(num_points)
+        self.mp1 = torch.nn.MaxPool1d(num_points, return_indices=True)
         self.num_points = num_points
         self.global_feat = global_feat
     def forward(self, x):
@@ -145,18 +145,18 @@ class PointNetfeat(nn.Module):
         # conv5 128 x n -> 1024 x n
         x = self.bn5(self.conv5(x))
         # pooling b x 1024 x n -> b x 1024 x 1
-        x = self.mp1(x)
+        x, pool_indices = self.mp1(x)
         # view b x 1024 x 1 -> b x 1024
         x = x.view(-1, 1024)
         if self.global_feat:    # using global feats for classification
-            return x, trans1, trans2
+            return x, trans1, trans2, pool_indices
         else:                   # for segmentation
             x = x.view(-1, 1024, 1).repeat(1, 1, self.num_points)
             return torch.cat([x, pointfeat], 1), trans1, trans2
 
 # classification
 class PointNetCls(nn.Module):
-    def __init__(self, num_points = 2500, k = 2):
+    def __init__(self, num_points, k):
         super(PointNetCls, self).__init__()
         self.num_points = num_points
         self.feat = PointNetfeat(num_points, global_feat=True)
@@ -166,11 +166,72 @@ class PointNetCls(nn.Module):
         self.bn1 = nn.BatchNorm1d(512)
         self.bn2 = nn.BatchNorm1d(256)
     def forward(self, x):
-        x, trans1, trans2 = self.feat(x)
+        x, trans1, trans2, pool_indices = self.feat(x)
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
         x = self.fc3(x) # bz x 40
         return F.log_softmax(x), trans1, trans2
+
+class PointNetfeat_Decode(nn.Module):
+    def __init__(self, num_points):
+        super(PointNetfeat_Decode, self).__init__()
+        self.num_points = num_points
+        self.mup1 = torch.nn.MaxUnpool1d(num_points)
+        self.dconv5 = torch.nn.ConvTranspose1d(1024, 128, 1)
+        self.dconv4 = torch.nn.ConvTranspose1d(128, 64, 1)
+        self.dconv3 = torch.nn.ConvTranspose1d(64, 64, 1)
+        self.dconv2 = torch.nn.ConvTranspose1d(64, 64, 1)
+        self.dconv1 = torch.nn.ConvTranspose1d(64, 3, 1)
+        # bn
+        self.bn5 = nn.BatchNorm1d(128)
+        self.bn4 = nn.BatchNorm1d(64)
+        self.bn3 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(64)
+        self.bn1 = nn.BatchNorm1d(3)
+    def forward(self, x, pool_indices):
+        x = x.unsqueeze(-1)
+        # unpooling b x 1024 x 1 -> b x 1024 x n
+        x = self.mup1(x, pool_indices)
+        # dconv5 b x 1024 x n -> b x 128 x n
+        x = F.relu(self.bn5(self.dconv5(x)))
+        # dconv4 b x 128 x n -> b x 64 x n
+        x = F.relu(self.bn4(self.dconv4(x)))
+        # dconv3 b x 64 x n -> b x 64 x n
+        x = F.relu(self.bn3(self.dconv3(x)))
+        # dconv2 b x 64 x n -> b x 64 x n
+        x = F.relu(self.bn2(self.dconv2(x)))
+        # dconv1 b x 64 x n -> b x 3 x n
+        x = F.relu(self.bn1(self.dconv1(x)))
+        return x
+
+# PointNet VAE
+class PointNetVAE(nn.Module):
+    def __init__(self, num_points):
+        super(PointNetVAE, self).__init__()
+        self.num_points = num_points
+        # encoder
+        self.enc_feat = PointNetfeat(num_points, global_feat=True)
+        self.enc_fc1 = nn.Linear(1024, 512)
+        self.enc_fc2 = nn.Linear(512, 256)
+        # decoder
+        self.dec_fc2 = nn.Linear(256, 512)
+        self.dec_fc1 = nn.Linear(512, 1024)
+        self.dec_feat = PointNetfeat_Decode(num_points)
+        # bn
+        self.enc_bn512 = nn.BatchNorm1d(512)
+        self.enc_bn256 = nn.BatchNorm1d(256)
+        self.dec_bn512 = nn.BatchNorm1d(512)
+        self.dec_bn1024 = nn.BatchNorm1d(1024)
+    def forward(self, x):
+        x, trans1, trans2, pool_indices = self.enc_feat(x)
+        x = F.relu(self.enc_bn512(self.enc_fc1(x)))
+        x = F.relu(self.enc_bn256(self.enc_fc2(x)))
+        feature = x # 256
+        x = F.relu(self.dec_bn512(self.dec_fc2(x)))
+        x = F.relu(self.dec_bn1024(self.dec_fc1(x)))
+        x = self.dec_feat(x, pool_indices)
+        points = x
+        return feature, points, trans1, trans2
 
 # regular segmentation
 class PointNetDenseCls(nn.Module):
@@ -201,24 +262,30 @@ class PointNetDenseCls(nn.Module):
 
 
 if __name__ == '__main__':
-    sim_data = Variable(torch.rand(32,3,2500))
+    n = 2500
+    c = 40
+    sim_data = Variable(torch.rand(32, 3, n))
 
-    trans = STN3d()
+    trans = STN3d(num_points=n)
     out = trans(sim_data)
     print('stn', out.size())
 
-    pointfeat = PointNetfeat(global_feat=True)
-    out, _ = pointfeat(sim_data)
+    pointfeat = PointNetfeat(num_points=n, global_feat=True)
+    out, trans1, trans2, pool_indices = pointfeat(sim_data)
     print('global feat', out.size())
 
-    pointfeat = PointNetfeat(global_feat=False)
-    out, _ = pointfeat(sim_data)
+    pointfeat = PointNetfeat(num_points=n, global_feat=False)
+    out, trans1, trans2 = pointfeat(sim_data)
     print('point feat', out.size())
 
-    cls = PointNetCls(k = 5)
-    out, _ = cls(sim_data)
+    cls = PointNetCls(num_points=n, k = c)
+    out, trans1, trans2 = cls(sim_data)
     print('class', out.size())
 
-    seg = PointNetDenseCls(k = 3)
-    out, _ = seg(sim_data)
+    seg = PointNetDenseCls(num_points=n, k = c)
+    out, trans1, trans2 = seg(sim_data)
     print('seg', out.size())
+
+    vae = PointNetVAE(num_points=n)
+    feature, points, trans1, trans2 = vae(sim_data)
+    print('vae', feature.size(), points.size())

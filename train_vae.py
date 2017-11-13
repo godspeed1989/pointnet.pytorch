@@ -12,15 +12,15 @@ import torch.utils.data
 from torch.autograd import Variable
 from datasets import PartDataset
 from modelnet40_pcl_datasets import Modelnet40_PCL_Dataset
-from pointnet import PointNetCls
+from pointnet1 import PointNetVAE
 import torch.nn.functional as F
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--batchSize', type=int, default = 12, help='input batch size')
+parser.add_argument('--batchSize', type=int, default = 8, help='input batch size')
 parser.add_argument('--num_points', type=int, default = None, help='input batch size')
 parser.add_argument('--workers', type=int, default = 4, help='number of data loading workers')
 parser.add_argument('--nepoch', type=int, default = 250, help='number of epochs to train for')
-parser.add_argument('--outf', type=str, default = 'cls',  help='output folder')
+parser.add_argument('--outf', type=str, default = 'vae',  help='output folder')
 parser.add_argument('--model', type=str, default = '',  help='model path')
 parser.add_argument('--cuda', type=bool, default = True, help='run with cuda')
 parser.add_argument('--start_epoch', type=int, default = 0, help='start epoch index')
@@ -57,8 +57,6 @@ testdataloader = torch.utils.data.DataLoader(test_dataset, batch_size=opt.batchS
                                              shuffle=True, num_workers=int(opt.workers))
 
 print('train:', len(train_dataset), 'test:', len(test_dataset))
-num_classes = len(train_dataset.classes)
-print('classes', num_classes)
 
 if not os.path.exists(opt.outf):
     try:
@@ -72,8 +70,8 @@ def log_string(out_str):
     LOG_FOUT.flush()
     print(out_str)
 
-classifier = PointNetCls(k = num_classes, num_points = opt.num_points)
-optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
+autoencoder = PointNetVAE(num_points = opt.num_points)
+optimizer = optim.SGD(autoencoder.parameters(), lr=0.01, momentum=0.9)
 # F.nll_loss()
 criterion = nn.CrossEntropyLoss()
 
@@ -81,11 +79,36 @@ if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
 if opt.cuda:
-    classifier.cuda()
+    autoencoder.cuda()
     criterion.cuda()
 
-num_batch = len(train_dataset) / opt.batchSize + 1
+def prepare_one_batch_input(points, target):
+    if dataset == 'partnno':
+        points, target = Variable(points), Variable(target[:,0])
+    elif dataset == 'modelnet40_pcl':
+        points, target = Variable(points), Variable(target[:])
+    # b x np x 3 -> b x 3 x np
+    points = points.transpose(2,1)
+    if opt.cuda:
+        return points.cuda(), target.cuda()
+    return points, target
+def get_trans_loss(trans2):
+    eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).repeat(bsize, 1)
+    eye64 = eye64.view(bsize, 64, 64)
+    regression_weight = Variable(torch.FloatTensor([0.001]))
+    if trans2.is_cuda:
+        eye64 = eye64.cuda()
+        regression_weight = regression_weight.cuda()
+    trans2 = torch.bmm(trans2, trans2.transpose(2, 1))
+    trans2 = trans2 - eye64
+    trans_loss = torch.mul(torch.norm(trans2, 2), regression_weight)
+    return trans_loss
+reconstruction_function = nn.MSELoss(size_average = True)
+def get_pc_loss(out_points, points):
+    MSE = reconstruction_function(out_points, points)
+    return MSE
 
+num_batch = len(train_dataset) / opt.batchSize + 1
 se = opt.start_epoch
 for epoch in range(opt.nepoch):
     i = 0
@@ -93,48 +116,30 @@ for epoch in range(opt.nepoch):
     for points, target in traindataloader:
         i += 1
         bsize = len(target)
-        if dataset == 'partnno':
-            points, target = Variable(points), Variable(target[:,0])
-        elif dataset == 'modelnet40_pcl':
-            points, target = Variable(points), Variable(target[:])
-        points = points.transpose(2,1)
-        if opt.cuda:
-            points, target = points.cuda(), target.cuda()
+        points, target = prepare_one_batch_input(points, target)
         optimizer.zero_grad()
-        pred, _, trans2 = classifier(points)
+        # forward
+        feature, out_points, trans1, trans2 = autoencoder(points)
         # get loss
-        eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).repeat(bsize,1)
-        eye64 = eye64.view(bsize, 64, 64)
-        regression_weight = Variable(torch.FloatTensor([0.001]))
-        if trans2.is_cuda:
-            eye64 = eye64.cuda()
-            regression_weight = regression_weight.cuda()
-        trans2 = torch.bmm(trans2, trans2.transpose(2,1))
-        trans2 = trans2.sub(eye64)
-        loss = torch.add(criterion(pred, target), torch.mul(torch.norm(trans2, 2), regression_weight))
+        trloss = get_trans_loss(trans2)
+        pcloss = get_pc_loss(out_points, points)
+        loss = torch.add(trloss, pcloss)
         loss.backward()
         optimizer.step()
-        pred_choice = pred.data.max(1)[1]
-        correct = pred_choice.eq(target.data).cpu().sum()
-        log_string('[%d: %d/%d] train loss: %f accuracy: %f' %
-                    (se+epoch, i, num_batch, loss.data[0], correct/float(bsize)))
+        log_string('[%d: %d/%d] train loss: %f (%f %f)' %
+                   (se+epoch, i, num_batch, loss.data[0], trloss.data[0], pcloss.data[0]))
     # test per epoch
-    j, loss, correct = 0, 0, 0
+    j, loss = 0, 0
     for points, target in testdataloader:
         j += 1
         bsize = len(target)
-        if dataset == 'partnno':
-            points, target = Variable(points), Variable(target[:,0])
-        elif dataset == 'modelnet40_pcl':
-            points, target = Variable(points), Variable(target[:])
-        points = points.transpose(2,1)
-        if opt.cuda:
-            points, target = points.cuda(), target.cuda()
-        pred, _, _ = classifier(points)
-        loss += F.nll_loss(pred, target).data[0]
-        pred_choice = pred.data.max(1)[1]
-        correct += pred_choice.eq(target.data).cpu().sum() / float(bsize)
-    log_string('[%d: %d/%d] test loss: %f accuracy: %f' %
-                (se+epoch, i, num_batch, loss/j, correct/j))
+        points, target = prepare_one_batch_input(points, target)
+        # forward
+        feature, out_points, trans1, trans2 = autoencoder(points)
+        # get loss
+        loss += torch.add(get_trans_loss(trans2), get_pc_loss(out_points, points))
+    # print test result
+    log_string('[%d: %d/%d] test loss: %f' % (se+epoch, i, num_batch, loss/j))
     # save per epoch
-    torch.save(classifier.state_dict(), '%s/cls_model_%d.pth' % (opt.outf, se+epoch))
+    torch.save(classifier.state_dict(), '%s/vae_model_%d.pth' % (opt.outf, se+epoch))
+print('Done.')
