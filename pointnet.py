@@ -212,26 +212,40 @@ class PointNetVAE(nn.Module):
         # encoder
         self.enc_feat = PointNetfeat(num_points, global_feat=True)
         self.enc_fc1 = nn.Linear(1024, 512)
-        self.enc_fc2 = nn.Linear(512, 256)
+        self.enc_fc2_1 = nn.Linear(512, 256)
+        self.enc_fc2_2 = nn.Linear(512, 256)
         # decoder
         self.dec_fc2 = nn.Linear(256, 512)
         self.dec_fc1 = nn.Linear(512, 1024)
         self.dec_feat = PointNetfeat_Decode(num_points)
         # bn
         self.enc_bn512 = nn.BatchNorm1d(512)
-        self.enc_bn256 = nn.BatchNorm1d(256)
+        self.enc_bn256_1 = nn.BatchNorm1d(256)
+        self.enc_bn256_2 = nn.BatchNorm1d(256)
         self.dec_bn512 = nn.BatchNorm1d(512)
         self.dec_bn1024 = nn.BatchNorm1d(1024)
+    def reparametrize(self, mu, logvar):
+        std = logvar.mul(0.5).exp_()
+        if mu.is_cuda:
+            eps = torch.cuda.FloatTensor(std.size()).normal_()
+        else:
+            eps = torch.FloatTensor(std.size()).normal_()
+        eps = Variable(eps)
+        return eps.mul(std).add_(mu)
     def forward(self, x):
+        # encode
         x, trans1, trans2, pool_indices = self.enc_feat(x)
         x = F.relu(self.enc_bn512(self.enc_fc1(x)))
-        x = F.relu(self.enc_bn256(self.enc_fc2(x)))
-        feature = x # 256
-        x = F.relu(self.dec_bn512(self.dec_fc2(x)))
+        # reparametrize
+        mu = F.relu(self.enc_bn256_1(self.enc_fc2_1(x)))
+        logvar = F.relu(self.enc_bn256_2(self.enc_fc2_2(x)))
+        z = self.reparametrize(mu, logvar)
+        # decode
+        x = F.relu(self.dec_bn512(self.dec_fc2(z)))
         x = F.relu(self.dec_bn1024(self.dec_fc1(x)))
         x = self.dec_feat(x, pool_indices)
         points = x
-        return feature, points, trans1, trans2
+        return z, points, trans1, trans2, mu, logvar
 
 # regular segmentation
 class PointNetDenseCls(nn.Module):

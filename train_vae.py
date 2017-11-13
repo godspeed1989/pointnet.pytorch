@@ -12,7 +12,7 @@ import torch.utils.data
 from torch.autograd import Variable
 from datasets import PartDataset
 from modelnet40_pcl_datasets import Modelnet40_PCL_Dataset
-from pointnet1 import PointNetVAE
+from pointnet import PointNetVAE
 import torch.nn.functional as F
 
 parser = argparse.ArgumentParser()
@@ -103,10 +103,22 @@ def get_trans_loss(trans2):
     trans2 = trans2 - eye64
     trans_loss = torch.mul(torch.norm(trans2, 2), regression_weight)
     return trans_loss
-reconstruction_function = nn.MSELoss(size_average = True)
-def get_pc_loss(out_points, points):
-    MSE = reconstruction_function(out_points, points)
-    return MSE
+def get_pc_loss(out_points, points, trans1):
+    out_points = out_points.clone()
+    trans1 = trans1.clone()
+    for i in range(trans1.size()[0]):
+        trans1[i] = torch.inverse(trans1[i])
+    out_points = out_points.transpose(2, 1) # 3 x n -> n x 3
+    out_points = torch.bmm(out_points, trans1)
+    out_points = out_points.transpose(2, 1).contiguous() # n x 3 -> 3 x n
+    #
+    pc_loss = torch.mean(out_points - points)
+    return pc_loss
+def get_KL_loss(mu, logvar):
+    # loss = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+    KLD = torch.sum(KLD_element).mul_(-0.5)
+    return KLD
 
 num_batch = len(train_dataset) / opt.batchSize + 1
 se = opt.start_epoch
@@ -119,15 +131,19 @@ for epoch in range(opt.nepoch):
         points, target = prepare_one_batch_input(points, target)
         optimizer.zero_grad()
         # forward
-        feature, out_points, trans1, trans2 = autoencoder(points)
+        feature, out_points, trans1, trans2, mu, logvar = autoencoder(points)
         # get loss
         trloss = get_trans_loss(trans2)
-        pcloss = get_pc_loss(out_points, points)
-        loss = torch.add(trloss, pcloss)
+        pcloss = get_pc_loss(out_points, points, trans1)
+        klloss = get_KL_loss(mu, logvar)
+        loss = trloss + pcloss + klloss
+        # backward
+        #optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        log_string('[%d: %d/%d] train loss: %f (%f %f)' %
-                   (se+epoch, i, num_batch, loss.data[0], trloss.data[0], pcloss.data[0]))
+        log_string('[%d: %d/%d] train loss: %f (%f %f %f)' %
+                   (se+epoch, i, num_batch, loss.data[0],
+                   trloss.data[0], pcloss.data[0], klloss.data[0]))
     # test per epoch
     j, loss = 0, 0
     for points, target in testdataloader:
@@ -135,11 +151,15 @@ for epoch in range(opt.nepoch):
         bsize = len(target)
         points, target = prepare_one_batch_input(points, target)
         # forward
-        feature, out_points, trans1, trans2 = autoencoder(points)
+        feature, out_points, trans1, trans2, mu, logvar = autoencoder(points)
         # get loss
-        loss += torch.add(get_trans_loss(trans2), get_pc_loss(out_points, points))
+        trloss = get_trans_loss(trans2)
+        pcloss = get_pc_loss(out_points, points, trans1)
+        klloss = get_KL_loss(mu, logvar)
+        all_loss = trloss + pcloss + klloss
+        loss += all_loss.data[0]
     # print test result
     log_string('[%d: %d/%d] test loss: %f' % (se+epoch, i, num_batch, loss/j))
     # save per epoch
-    torch.save(classifier.state_dict(), '%s/vae_model_%d.pth' % (opt.outf, se+epoch))
+    torch.save(autoencoder.state_dict(), '%s/vae_model_%d.pth' % (opt.outf, se+epoch))
 print('Done.')
