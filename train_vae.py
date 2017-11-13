@@ -72,15 +72,12 @@ def log_string(out_str):
 
 autoencoder = PointNetVAE(num_points = opt.num_points)
 optimizer = optim.SGD(autoencoder.parameters(), lr=0.01, momentum=0.9)
-# F.nll_loss()
-criterion = nn.CrossEntropyLoss()
 
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
 if opt.cuda:
     autoencoder.cuda()
-    criterion.cuda()
 
 def prepare_one_batch_input(points, target):
     if dataset == 'partnno':
@@ -112,7 +109,7 @@ def get_pc_loss(out_points, points, trans1):
     out_points = torch.bmm(out_points, trans1)
     out_points = out_points.transpose(2, 1).contiguous() # n x 3 -> 3 x n
     #
-    pc_loss = torch.mean(out_points - points)
+    pc_loss = torch.max(torch.abs(out_points - points))
     return pc_loss
 def get_KL_loss(mu, logvar):
     # loss = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)

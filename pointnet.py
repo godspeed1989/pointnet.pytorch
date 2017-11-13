@@ -177,28 +177,20 @@ class PointNetfeat_Decode(nn.Module):
         super(PointNetfeat_Decode, self).__init__()
         self.num_points = num_points
         self.mup1 = torch.nn.MaxUnpool1d(num_points)
-        self.dconv5 = torch.nn.ConvTranspose1d(1024, 128, 1)
-        self.dconv4 = torch.nn.ConvTranspose1d(128, 64, 1)
-        self.dconv3 = torch.nn.ConvTranspose1d(64, 64, 1)
-        self.dconv2 = torch.nn.ConvTranspose1d(64, 64, 1)
+        self.dconv3 = torch.nn.ConvTranspose1d(1024, 128, 1)
+        self.dconv2 = torch.nn.ConvTranspose1d(128, 64, 1)
         self.dconv1 = torch.nn.ConvTranspose1d(64, 3, 1)
         # bn
-        self.bn5 = nn.BatchNorm1d(128)
-        self.bn4 = nn.BatchNorm1d(64)
-        self.bn3 = nn.BatchNorm1d(64)
+        self.bn3 = nn.BatchNorm1d(128)
         self.bn2 = nn.BatchNorm1d(64)
         self.bn1 = nn.BatchNorm1d(3)
     def forward(self, x, pool_indices):
         x = x.unsqueeze(-1)
         # unpooling b x 1024 x 1 -> b x 1024 x n
         x = self.mup1(x, pool_indices)
-        # dconv5 b x 1024 x n -> b x 128 x n
-        x = F.relu(self.bn5(self.dconv5(x)))
-        # dconv4 b x 128 x n -> b x 64 x n
-        x = F.relu(self.bn4(self.dconv4(x)))
-        # dconv3 b x 64 x n -> b x 64 x n
+        # dconv3 b x 1024 x n -> b x 128 x n
         x = F.relu(self.bn3(self.dconv3(x)))
-        # dconv2 b x 64 x n -> b x 64 x n
+        # dconv2 b x 128 x n -> b x 64 x n
         x = F.relu(self.bn2(self.dconv2(x)))
         # dconv1 b x 64 x n -> b x 3 x n
         x = F.relu(self.bn1(self.dconv1(x)))
