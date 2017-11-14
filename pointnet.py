@@ -172,6 +172,31 @@ class PointNetCls(nn.Module):
         x = self.fc3(x) # bz x 40
         return F.log_softmax(x), trans1, trans2
 
+class PointNetfeat_Encode(nn.Module):
+    def __init__(self, num_points):
+        super(PointNetfeat_Encode, self).__init__()
+        self.num_points = num_points
+        self.conv1 = torch.nn.Conv1d(3, 64, 1)
+        self.conv2 = torch.nn.Conv1d(64, 128, 1)
+        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
+        self.mp1 = torch.nn.MaxPool1d(num_points, return_indices=True)
+        # bn
+        self.bn1 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.bn3 = nn.BatchNorm1d(1024)
+    def forward(self, x, ):
+        # conv1 b x 3 x n -> b x 64 x n
+        x = F.relu(self.bn1(self.conv1(x)))
+        # conv2 b x 64 x n -> b x 128 x n
+        x = F.relu(self.bn2(self.conv2(x)))
+        # conv3 b x 128 x n -> b x 1024 x n
+        x = F.relu(self.bn3(self.conv3(x)))
+        # pooling b x 1024 x n -> b x 1024 x 1
+        x, pool_indices = self.mp1(x)
+        # view b x 1024 x 1 -> b x 1024
+        x = x.squeeze()
+        return x, pool_indices
+
 class PointNetfeat_Decode(nn.Module):
     def __init__(self, num_points):
         super(PointNetfeat_Decode, self).__init__()
@@ -198,11 +223,15 @@ class PointNetfeat_Decode(nn.Module):
 
 # PointNet VAE
 class PointNetVAE(nn.Module):
-    def __init__(self, num_points):
+    def __init__(self, num_points, use_pointnet_feat):
         super(PointNetVAE, self).__init__()
         self.num_points = num_points
+        self.use_pointnet_feat = use_pointnet_feat
         # encoder
-        self.enc_feat = PointNetfeat(num_points, global_feat=True)
+        if self.use_pointnet_feat:
+            self.enc_feat = PointNetfeat(num_points, global_feat=True)
+        else:
+            self.enc_feat = PointNetfeat_Encode(num_points)
         self.enc_fc1 = nn.Linear(1024, 512)
         self.enc_fc2_1 = nn.Linear(512, 256)
         self.enc_fc2_2 = nn.Linear(512, 256)
@@ -226,7 +255,10 @@ class PointNetVAE(nn.Module):
         return eps.mul(std).add_(mu)
     def forward(self, x):
         # encode
-        x, trans1, trans2, pool_indices = self.enc_feat(x)
+        if self.use_pointnet_feat:
+            x, trans1, trans2, pool_indices = self.enc_feat(x)
+        else:
+            x, pool_indices = self.enc_feat(x)
         x = F.relu(self.enc_bn512(self.enc_fc1(x)))
         # reparametrize
         mu = F.relu(self.enc_bn256_1(self.enc_fc2_1(x)))
@@ -237,7 +269,10 @@ class PointNetVAE(nn.Module):
         x = F.relu(self.dec_bn1024(self.dec_fc1(x)))
         x = self.dec_feat(x, pool_indices)
         points = x
-        return z, points, trans1, trans2, mu, logvar
+        if self.use_pointnet_feat:
+            return z, points, trans1, trans2, mu, logvar
+        else:
+            return z, points, mu, logvar
 
 # regular segmentation
 class PointNetDenseCls(nn.Module):

@@ -70,7 +70,8 @@ def log_string(out_str):
     LOG_FOUT.flush()
     print(out_str)
 
-autoencoder = PointNetVAE(num_points = opt.num_points)
+pointnet_feat = True
+autoencoder = PointNetVAE(num_points = opt.num_points, use_pointnet_feat = pointnet_feat)
 optimizer = optim.SGD(autoencoder.parameters(), lr=0.01, momentum=0.9)
 
 if opt.model != '':
@@ -101,15 +102,17 @@ def get_trans_loss(trans2):
     trans_loss = torch.mul(torch.norm(trans2, 2), regression_weight)
     return trans_loss
 def get_pc_loss(out_points, points, trans1):
-    out_points = out_points.clone()
-    trans1 = trans1.clone()
-    for i in range(trans1.size()[0]):
-        trans1[i] = torch.inverse(trans1[i])
-    out_points = out_points.transpose(2, 1) # 3 x n -> n x 3
-    out_points = torch.bmm(out_points, trans1)
-    out_points = out_points.transpose(2, 1).contiguous() # n x 3 -> 3 x n
+    if pointnet_feat:
+        out_points = out_points.clone()
+        trans1 = trans1.clone()
+        for i in range(trans1.size()[0]):
+            trans1[i] = torch.inverse(trans1[i])
+        out_points = out_points.transpose(2, 1) # 3 x n -> n x 3
+        out_points = torch.bmm(out_points, trans1)
+        out_points = out_points.transpose(2, 1).contiguous() # n x 3 -> 3 x n
     #
-    pc_loss = torch.max(torch.abs(out_points - points))
+    #pc_loss = torch.max(torch.abs(out_points - points))
+    pc_loss = F.binary_cross_entropy(F.sigmoid(points), out_points)
     return pc_loss
 def get_KL_loss(mu, logvar):
     # loss = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
@@ -128,19 +131,32 @@ for epoch in range(opt.nepoch):
         points, target = prepare_one_batch_input(points, target)
         optimizer.zero_grad()
         # forward
-        feature, out_points, trans1, trans2, mu, logvar = autoencoder(points)
+        if pointnet_feat:
+            feature, out_points, trans1, trans2, mu, logvar = autoencoder(points)
+            trloss = get_trans_loss(trans2)
+            pcloss = get_pc_loss(out_points, points, trans1)
+        else:
+            feature, out_points, mu, logvar = autoencoder(points)
+            pcloss = get_pc_loss(out_points, points, None)
         # get loss
-        trloss = get_trans_loss(trans2)
-        pcloss = get_pc_loss(out_points, points, trans1)
         klloss = get_KL_loss(mu, logvar)
-        loss = trloss + pcloss + klloss
+        if pointnet_feat:
+            loss = trloss + pcloss + klloss
+        else:
+            loss = pcloss + klloss
         # backward
         #optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        log_string('[%d: %d/%d] train loss: %f (%f %f %f)' %
-                   (se+epoch, i, num_batch, loss.data[0],
-                   trloss.data[0], pcloss.data[0], klloss.data[0]))
+        # print
+        if pointnet_feat:
+            log_string('[%d: %d/%d] train loss: %f (%f %f %f)' %
+                        (se+epoch, i, num_batch, loss.data[0],
+                        trloss.data[0], pcloss.data[0], klloss.data[0]))
+        else:
+            log_string('[%d: %d/%d] train loss: %f (%f %f)' %
+                        (se+epoch, i, num_batch, loss.data[0],
+                        pcloss.data[0], klloss.data[0]))
     # test per epoch
     j, loss = 0, 0
     for points, target in testdataloader:
@@ -148,12 +164,19 @@ for epoch in range(opt.nepoch):
         bsize = len(target)
         points, target = prepare_one_batch_input(points, target)
         # forward
-        feature, out_points, trans1, trans2, mu, logvar = autoencoder(points)
+        if pointnet_feat:
+            feature, out_points, trans1, trans2, mu, logvar = autoencoder(points)
+            trloss = get_trans_loss(trans2)
+            pcloss = get_pc_loss(out_points, points, trans1)
+        else:
+            feature, out_points, mu, logvar = autoencoder(points)
+            pcloss = get_pc_loss(out_points, points, None)
         # get loss
-        trloss = get_trans_loss(trans2)
-        pcloss = get_pc_loss(out_points, points, trans1)
         klloss = get_KL_loss(mu, logvar)
-        all_loss = trloss + pcloss + klloss
+        if pointnet_feat:
+            all_loss = trloss + pcloss + klloss
+        else:
+            all_loss = pcloss + klloss
         loss += all_loss.data[0]
     # print test result
     log_string('[%d: %d/%d] test loss: %f' % (se+epoch, i, num_batch, loss/j))
