@@ -16,7 +16,7 @@ from pointnet import PointNetCls
 import torch.nn.functional as F
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--batchSize', type=int, default = 12, help='input batch size')
+parser.add_argument('--batchSize', type=int, default = 8, help='input batch size')
 parser.add_argument('--num_points', type=int, default = None, help='input batch size')
 parser.add_argument('--workers', type=int, default = 4, help='number of data loading workers')
 parser.add_argument('--nepoch', type=int, default = 250, help='number of epochs to train for')
@@ -28,6 +28,13 @@ parser.add_argument('--start_epoch', type=int, default = 0, help='start epoch in
 opt = parser.parse_args()
 print (opt)
 
+LOG_FOUT = open(os.path.join(opt.outf, 'log_train.txt'), 'w')
+LOG_FOUT.write(str(opt)+'\n')
+def log_string(out_str):
+    LOG_FOUT.write(out_str+'\n')
+    LOG_FOUT.flush()
+    print(out_str)
+
 blue = lambda x:'\033[94m' + x + '\033[0m'
 
 opt.manualSeed = random.randint(1, 10000) # fix seed
@@ -35,7 +42,7 @@ print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
-dataset = 'modelnet40_pcl'
+dataset = 'SHREC'
 if dataset == 'partnno':
     opt.num_points = 2500
     train_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0',
@@ -48,6 +55,12 @@ elif dataset == 'modelnet40_pcl':
                                            train = True, npoints = opt.num_points)
     test_dataset = Modelnet40_PCL_Dataset(data_dir = 'modelnet40_ply_hdf5_2048',
                                           train = False, npoints = opt.num_points)
+elif dataset == 'SHREC':
+    opt.num_points = 4096
+    train_dataset = Modelnet40_PCL_Dataset(data_dir = 'shrec2017_4096',
+                                           train = True, npoints = opt.num_points)
+    test_dataset = Modelnet40_PCL_Dataset(data_dir = 'shrec2017_4096',
+                                          train = False, npoints = opt.num_points)
 else:
     assert 0
 
@@ -56,21 +69,16 @@ traindataloader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batc
 testdataloader = torch.utils.data.DataLoader(test_dataset, batch_size=opt.batchSize,
                                              shuffle=True, num_workers=int(opt.workers))
 
-print('train:', len(train_dataset), 'test:', len(test_dataset))
+log_string('%s num points %d', dataset, opt.num_points)
+log_string('train: %d test %d' % (len(train_dataset), len(test_dataset)))
 num_classes = len(train_dataset.classes)
-print('classes', num_classes)
+log_string('classes: %d' % num_classes)
 
 if not os.path.exists(opt.outf):
     try:
         os.makedirs(opt.outf)
     except OSError:
         pass
-LOG_FOUT = open(os.path.join(opt.outf, 'log_train.txt'), 'w')
-LOG_FOUT.write(str(opt)+'\n')
-def log_string(out_str):
-    LOG_FOUT.write(out_str+'\n')
-    LOG_FOUT.flush()
-    print(out_str)
 
 classifier = PointNetCls(k = num_classes, num_points = opt.num_points)
 optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
@@ -95,7 +103,7 @@ for epoch in range(opt.nepoch):
         bsize = len(target)
         if dataset == 'partnno':
             points, target = Variable(points), Variable(target[:,0])
-        elif dataset == 'modelnet40_pcl':
+        elif dataset == 'modelnet40_pcl' or dataset == 'SHREC':
             points, target = Variable(points), Variable(target[:])
         points = points.transpose(2,1)
         if opt.cuda:
@@ -125,7 +133,7 @@ for epoch in range(opt.nepoch):
         bsize = len(target)
         if dataset == 'partnno':
             points, target = Variable(points), Variable(target[:,0])
-        elif dataset == 'modelnet40_pcl':
+        elif dataset == 'modelnet40_pcl' or dataset == 'SHREC':
             points, target = Variable(points), Variable(target[:])
         points = points.transpose(2,1)
         if opt.cuda:
