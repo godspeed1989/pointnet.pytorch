@@ -28,6 +28,8 @@ parser.add_argument('--start_epoch', type=int, default = 0, help='start epoch in
 opt = parser.parse_args()
 print (opt)
 
+if not os.path.exists(opt.outf):
+    os.makedirs(opt.outf)
 LOG_FOUT = open(os.path.join(opt.outf, 'log_train.txt'), 'w')
 LOG_FOUT.write(str(opt)+'\n')
 def log_string(out_str):
@@ -42,7 +44,7 @@ print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
-dataset = 'SHREC'
+dataset = 'partnno'
 if dataset == 'partnno':
     opt.num_points = 2500
     train_dataset = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0',
@@ -69,16 +71,10 @@ traindataloader = torch.utils.data.DataLoader(train_dataset, batch_size=opt.batc
 testdataloader = torch.utils.data.DataLoader(test_dataset, batch_size=opt.batchSize,
                                              shuffle=True, num_workers=int(opt.workers))
 
-log_string('%s num points %d', dataset, opt.num_points)
+log_string('%s num points %d' % (dataset, opt.num_points))
 log_string('train: %d test %d' % (len(train_dataset), len(test_dataset)))
 num_classes = len(train_dataset.classes)
 log_string('classes: %d' % num_classes)
-
-if not os.path.exists(opt.outf):
-    try:
-        os.makedirs(opt.outf)
-    except OSError:
-        pass
 
 classifier = PointNetCls(k = num_classes, num_points = opt.num_points)
 optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
@@ -139,7 +135,7 @@ for epoch in range(opt.nepoch):
         if opt.cuda:
             points, target = points.cuda(), target.cuda()
         pred, _, _ = classifier(points)
-        loss += F.nll_loss(pred, target).data[0]
+        loss += criterion(pred, target).data[0]
         pred_choice = pred.data.max(1)[1]
         correct += pred_choice.eq(target.data).cpu().sum() / float(bsize)
     log_string('[%d: %d/%d] test loss: %f accuracy: %f' %

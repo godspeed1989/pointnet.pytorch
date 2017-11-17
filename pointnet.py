@@ -40,7 +40,7 @@ class STN3d(nn.Module):
         batchsize = x.size()[0]
         x = x.view(batchsize, 1, 3, self.num_points)
         x = self.conv1(x)
-        x = x.squeeze()
+        x = x.view(batchsize, 64, self.num_points)
         x = F.relu(self.bn1(x))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
@@ -128,7 +128,7 @@ class PointNetfeat(nn.Module):
         # conv1 1 x 3 x n -> 1 x 64 x n
         x = self.conv1(x)
         # 1 x 64 x n -> 64 x n
-        x = x.squeeze()
+        x = x.view(batchsize, 64, self.num_points)
         x = F.relu(self.bn1(x))
         # conv2 64 x n -> 64 x n
         x = F.relu(self.bn2(self.conv2(x)))
