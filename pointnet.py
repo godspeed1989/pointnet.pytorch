@@ -167,10 +167,11 @@ class PointNetCls(nn.Module):
         self.bn2 = nn.BatchNorm1d(256)
     def forward(self, x):
         x, trans1, trans2, pool_indices = self.feat(x)
+        feature = x
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
-        x = self.fc3(x) # bz x 40
-        return F.log_softmax(x), trans1, trans2
+        x = self.fc3(x) # b x k
+        return F.log_softmax(x), trans1, trans2, feature
 
 class PointNetfeat_Encode(nn.Module):
     def __init__(self, num_points):

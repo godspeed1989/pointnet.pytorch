@@ -105,7 +105,7 @@ for epoch in range(opt.nepoch):
         if opt.cuda:
             points, target = points.cuda(), target.cuda()
         optimizer.zero_grad()
-        pred, _, trans2 = classifier(points)
+        pred, _, trans2, feature = classifier(points)
         # get loss
         eye64 = Variable(torch.from_numpy(np.eye(64).astype(np.float32))).repeat(bsize,1)
         eye64 = eye64.view(bsize, 64, 64)
@@ -134,7 +134,7 @@ for epoch in range(opt.nepoch):
         points = points.transpose(2,1)
         if opt.cuda:
             points, target = points.cuda(), target.cuda()
-        pred, _, _ = classifier(points)
+        pred, _, _, feature = classifier(points)
         loss += criterion(pred, target).data[0]
         pred_choice = pred.data.max(1)[1]
         correct += pred_choice.eq(target.data).cpu().sum() / float(bsize)
