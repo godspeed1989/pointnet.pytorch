@@ -49,9 +49,6 @@ classifier.cuda()
 classifier.load_state_dict(torch.load(opt.model))
 classifier.eval()
 
-# F.nll_loss()
-criterion = nn.CrossEntropyLoss()
-
 dump_feature_file = h5py.File(opt.dump, 'w')
 dump_feature_file.clear()
 f1 = dump_feature_file.create_dataset('pred', shape=[len(test_dataset), num_classes], dtype=float)
@@ -67,7 +64,7 @@ for points, target in testdataloader:
     points = points.transpose(2,1)
     points, target = points.cuda(), target.cuda()
     pred, _, _, feature = classifier(points)
-    loss = criterion(pred, target)
+    loss = F.nll_loss(pred, target)
     pred_choice = pred.data.max(1)[1]
     correct = pred_choice.eq(target.data).cpu().sum()
     print('loss: %f accuracy: %f' %(loss.data[0], correct/float(bsize)))

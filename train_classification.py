@@ -78,15 +78,12 @@ log_string('classes: %d' % num_classes)
 
 classifier = PointNetCls(k = num_classes, num_points = opt.num_points)
 optimizer = optim.SGD(classifier.parameters(), lr=0.01, momentum=0.9)
-# F.nll_loss()
-criterion = nn.CrossEntropyLoss()
 
 if opt.model != '':
     classifier.load_state_dict(torch.load(opt.model))
 
 if opt.cuda:
     classifier.cuda()
-    criterion.cuda()
 
 num_batch = len(train_dataset) / opt.batchSize + 1
 
@@ -115,7 +112,7 @@ for epoch in range(opt.nepoch):
             regression_weight = regression_weight.cuda()
         trans2 = torch.bmm(trans2, trans2.transpose(2,1))
         trans2 = trans2.sub(eye64)
-        loss = torch.add(criterion(pred, target), torch.mul(torch.norm(trans2, 2), regression_weight))
+        loss = torch.add(F.nll_loss(pred, target), torch.mul(torch.norm(trans2, 2), regression_weight))
         loss.backward()
         optimizer.step()
         pred_choice = pred.data.max(1)[1]
@@ -135,7 +132,7 @@ for epoch in range(opt.nepoch):
         if opt.cuda:
             points, target = points.cuda(), target.cuda()
         pred, _, _, feature = classifier(points)
-        loss += criterion(pred, target).data[0]
+        loss += F.nll_loss(pred, target).cpu().data[0]
         pred_choice = pred.data.max(1)[1]
         correct += pred_choice.eq(target.data).cpu().sum() / float(bsize)
     log_string('[%d: %d/%d] test loss: %f accuracy: %f' %

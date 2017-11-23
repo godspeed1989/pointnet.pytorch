@@ -7,7 +7,7 @@ from IPython.core.debugger import Tracer
 debug_here = Tracer()
 
 class Modelnet40_PCL_Dataset(data.Dataset):
-    def __init__(self, data_dir, npoints = 2048, train = True):
+    def __init__(self, data_dir, npoints, train = True):
         self.npoints = npoints
         self.data_dir = data_dir
         self.train = train
